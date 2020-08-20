@@ -1,0 +1,23 @@
+[package]
+name = "nanodns-rs"
+version = "0.1.0"
+authors = ["Gero Posmyk-Leinemann <gero.posmyk-leinemann@typefox.io>"]
+edition = "2018"
+
+[dependencies]
+# Use unreleased v3.0.0
+clap = { git = "https://github.com/clap-rs/clap/", rev = "bbb14f8bd47ef201b315d367922343577ee60718"}
+
+# error handling
+anyhow = "1.0.32"
+thiserror = "1.0.13"
+
+# logging
+pretty_env_logger = "0.4.0"
+log = "0.4.11"
+
+# runtime + support
+ctrlc = "3.1.6"
+async-channel = "1.4.0"
+smol = "0.3.3"
+async-net = "0.1.2"
