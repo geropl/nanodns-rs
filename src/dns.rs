@@ -1,68 +1,131 @@
+use crate::Result;
 
-// use dns_message_parser as dns;
 use trust_dns_server as dns;
 use dns::proto;
 use proto::serialize::binary::{BinDecoder, BinDecodable, BinEncoder};
 use proto::op::header::MessageType;
-use proto::op::{OpCode, ResponseCode};
-// use proto::op::query::Query;
-// use proto::rr::{DNSClass, RecordType};
-use dns::authority::{MessageRequest, MessageResponseBuilder};
+use proto::op::{OpCode, ResponseCode, Header};
+use proto::rr::{DNSClass, Record, RecordType};
+use proto::rr::domain::{Name, Label};
+use dns::authority::{MessageRequest, MessageResponse, MessageResponseBuilder};
 
-pub fn answer_query(raw_content: Vec<u8>) -> std::result::Result<Vec<u8>, anyhow::Error> {
-    let mut decoder = BinDecoder::new(&raw_content);
-    let request = MessageRequest::read(&mut decoder)
-        .map_err(|e| anyhow!("dns decode error: {:?}", e))?;
-    trace!("received request: \n{:#?}", request);
+use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::net::Ipv4Addr;
 
-    if request.message_type() != MessageType::Query {
-        trace!("received none-query, returning NotImplemented response.");
-        let response_bytes = respond_with(&request, ResponseCode::NotImp)?;
-        return Ok(response_bytes);
-    }
-    if request.op_code() != OpCode::Query {
-        trace!("received none-standard query, ignoring.");
-        let response_bytes = respond_with(&request, ResponseCode::NotImp)?;
-        return Ok(response_bytes);
-    }
 
-    // let flags = dns::Flags {
-    //     qr: true,
-    //     opcode: dns::Opcode::Query,
-    //     // authorative answer
-    //     aa: true,
-    //     // truncated
-    //     tc: false,
-    //     // recursion desired
-    //     rd: false,
-    //     // recursion available
-    //     ra: false,
-    //     // dnssec
-    //     ad: false,
-    //     cd: false,
-    //     rcode: dns::RCode::NoError,
-    // };
-    // let mut builder = dns::Dns::new(1337, flags, vec![], )
+/// time-to-live [s]
+static TTL: u32 = 5 * 60;
 
-    // let mut builder = MessageResponseBuilder::new(None);
-    //     builder.
-    // for q in packet.queries() {
-    //     if q.query_type() != RecordType::A {
-    //         trace!("received none-A query, ignoring.");
-    //         continue;
-    //     }
-        
-    // }
-    let response_bytes = respond_with(&request, ResponseCode::NotAuth)?;
-    Ok(response_bytes)
+pub struct DnsAuthority {
+    names: Arc<BTreeMap<String, (Name, Ipv4Addr)>>,
 }
 
-fn respond_with(request: &MessageRequest, response_code: proto::op::ResponseCode) -> Result<Vec<u8>, anyhow::Error> {
+impl DnsAuthority {
+    pub fn new(names_map: Vec<(String, String)>) -> Result<DnsAuthority> {
+        let mut names = BTreeMap::new();
+        for (domain, a_record) in names_map {
+            let name = to_name(domain.as_str())?;
+            let addr: Ipv4Addr = a_record.parse()?;
+            names.insert(domain, (name, addr));
+        }
+        Ok(DnsAuthority {
+            names: Arc::new(names),
+        })
+    }
+
+    pub fn answer_query(&self, raw_content: Vec<u8>) -> Result<Vec<u8>> {
+        let mut decoder = BinDecoder::new(&raw_content);
+        let request = MessageRequest::read(&mut decoder)
+            .map_err(|e| anyhow!("dns decode error: {:?}", e))?;
+        trace!("received request: \n{:#?}", request);
+
+        if request.message_type() != MessageType::Query {
+            trace!("received none-query, returning NotImplemented response.");
+            let response_bytes = respond_with(&request, ResponseCode::NotImp)?;
+            return Ok(response_bytes);
+        }
+        if request.op_code() != OpCode::Query {
+            trace!("received none-standard query, ignoring.");
+            let response_bytes = respond_with(&request, ResponseCode::NotImp)?;
+            return Ok(response_bytes);
+        }
+
+        let answers: Vec<Record> = request.queries().iter()
+            .filter(|q| match (q.query_type(), q.query_class()) {
+                (RecordType::A, DNSClass::IN) => true,
+                (RecordType::AAAA, DNSClass::IN) => true,
+                (t, c) => {
+                    trace!("received unsupported query: ({}, {})", t, c);
+                    false
+                }
+            })
+            .map(|q| {
+                let q_name = q.name().to_string();
+                let q_name = &q_name.as_str()[..q_name.len() - 1];  // cut off trailing "."
+                trace!("query name: {}", q_name);
+
+                self.names.get(q_name)
+                    .map(|(n, addr)| {
+                        let mut r = Record::with(n.to_owned(), RecordType::A, TTL);
+                        r.set_rdata(proto::rr::RData::A(addr.to_owned()));
+                        r
+                    })
+            })
+            .filter(Option::is_some)
+            .map(|o| o.unwrap())
+            .collect();
+
+        if answers.is_empty() {
+            let response_bytes = respond_with(&request, ResponseCode::NXDomain)?;
+            return Ok(response_bytes);
+        }
+
+        // finalize and send message
+        let header = {
+            let mut header = Header::new();
+            header.set_id(request.id())
+                .set_op_code(request.op_code())
+                .set_response_code(ResponseCode::NoError)
+                .set_authoritative(true)
+                .set_checking_disabled(false)
+                .set_message_type(MessageType::Response)
+                .set_answer_count(answers.len() as u16);
+            header
+        };
+        let answers: Box<dyn Iterator<Item = &Record> + Send> = Box::new(answers.iter());
+        let response = MessageResponseBuilder::new(None)
+            .build(header, answers, none(), none(), none());
+
+        let response_bytes = encode(response)?;
+        Ok(response_bytes)
+    }
+}
+
+fn respond_with(request: &MessageRequest, response_code: proto::op::ResponseCode) -> Result<Vec<u8>> {
     let builder = MessageResponseBuilder::new(None);
     let response = builder.error_msg(request.id(), request.op_code(), response_code);
-    
+    encode(response)
+}
+
+fn encode(response: MessageResponse) -> Result<Vec<u8>> {
     let mut buf = Vec::with_capacity(512);
     let mut encoder = BinEncoder::new(&mut buf);
     response.destructive_emit(&mut encoder)?;
-    Ok(buf)
+    Ok(buf)   
+}
+
+fn none() -> Box<dyn Iterator<Item = &'static Record> + Send> {
+    Box::new(std::iter::empty())
+}
+
+fn to_name(domain: &str) -> Result<Name> {
+    let labels: std::result::Result<Vec<Label>, _> = domain.split(".")
+        .collect::<Vec<&str>>()
+        .into_iter()
+        .map(|l| Label::from_utf8(l))
+        .collect();
+    let labels = labels?;
+    let name = Name::from_labels(labels)?;
+    Ok(name)
 }

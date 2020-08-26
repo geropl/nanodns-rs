@@ -8,6 +8,8 @@ use async_net::UdpSocket;
 use smol::Task;
 
 use std::net::SocketAddr;
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 #[derive(Clap)]
 #[clap(
@@ -38,27 +40,34 @@ fn parse_socket_addr(addr: &str) -> std::result::Result<SocketAddr, std::net::Ad
     addr.parse()
 }
 
-type Result = std::result::Result<(), anyhow::Error>;
+type Result<T> = std::result::Result<T, anyhow::Error>;
 
-fn main() -> Result {
+fn main() -> Result<()> {
     let options = Options::parse();
 
+    // initialize logger
     let log_level = match options.verbose {
-        0 => log::LevelFilter::Info,
-        1 => log::LevelFilter::Debug,
+        0 => log::LevelFilter::Warn,
+        1 => log::LevelFilter::Info,
+        2 => log::LevelFilter::Debug,
         _ => log::LevelFilter::Trace,
     };
     pretty_env_logger::formatted_timed_builder()
         .filter_level(log_level)
         .init();
 
+    // set ctrl-c handler
     let (s, ctrl_c) = async_channel::bounded(100);
     ctrlc::set_handler(move || {
         let _ = s.try_send(());
     })?;
 
+    // load configured name map
+    let names_map = load_names(&options.name_file_path)?;
+    let dns_authority = dns::DnsAuthority::new(names_map)?;
+
     smol::run(async {
-        Task::spawn(serve_dns(options.addr))
+        Task::spawn(serve_dns(options.addr, dns_authority))
             .detach();
         info!("listening for DNS queries on {}...", options.addr);
 
@@ -68,11 +77,12 @@ fn main() -> Result {
     })
 }
 
-
-async fn serve_dns(addr: SocketAddr) -> Result {
+async fn serve_dns(addr: SocketAddr, dns_authority: dns::DnsAuthority) -> Result<()> {
     let socket = UdpSocket::bind(addr).await?;
     debug!("bound socket to {}.", &addr);
 
+    let dns_authority = Arc::new(dns_authority);
+    // let auth = &dns_authority;
     let mut buf = [0u8; 512];
     loop {
         let (bytes_read, sender_addr) = match socket.recv_from(&mut buf).await {
@@ -85,11 +95,11 @@ async fn serve_dns(addr: SocketAddr) -> Result {
         debug!("received datagram (length: {}, sender: {})", bytes_read, sender_addr);
         let request_bytes = Vec::from(&buf[0..bytes_read]);
 
-        // have a task respond to this request
-        let cloned_sender_addr = sender_addr.clone();
-        let cloned_socket = socket.clone();
+        // have a task per request
+        let socket = socket.clone();
+        let dns_authority = dns_authority.clone();
         Task::spawn(async move {
-            let result = respond(request_bytes, cloned_sender_addr, cloned_socket).await;
+            let result = respond(request_bytes, sender_addr, socket, dns_authority).await;
             if let Err(e) = result {
                 error!("{}", e);
             }
@@ -97,8 +107,8 @@ async fn serve_dns(addr: SocketAddr) -> Result {
     }
 }
 
-async fn respond(request_bytes: Vec<u8>, sender_addr: SocketAddr, socket: UdpSocket) -> Result {
-    let response_bytes = dns::answer_query(request_bytes)
+async fn respond(request_bytes: Vec<u8>, sender_addr: SocketAddr, socket: UdpSocket, dns_authority: Arc<dns::DnsAuthority>) -> Result<()> {
+    let response_bytes = dns_authority.answer_query(request_bytes)
         .or_else(|e| Err(anyhow!("error understanding or answering query: {}", e)))?;
 
     socket.send_to(&response_bytes, sender_addr)
@@ -108,3 +118,7 @@ async fn respond(request_bytes: Vec<u8>, sender_addr: SocketAddr, socket: UdpSoc
     Ok(())
 }
 
+fn load_names(path: &str) -> Result<Vec<(String, String)>> {
+    // TODO actually load the map
+    Ok(vec![("who.is".to_owned(), "1.2.3.4".to_owned())])
+}
