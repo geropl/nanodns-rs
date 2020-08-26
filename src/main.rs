@@ -1,4 +1,7 @@
+mod dns;
+
 #[macro_use] extern crate log;
+#[macro_use] extern crate anyhow;
 
 use clap::Clap;
 use async_net::UdpSocket;
@@ -57,7 +60,7 @@ fn main() -> Result {
     smol::run(async {
         Task::spawn(serve_dns(options.addr))
             .detach();
-        info!("started listening for DNS queries on {}...", options.addr);
+        info!("listening for DNS queries on {}...", options.addr);
 
         ctrl_c.recv().await?;
         info!("received Ctrl-C, quitting.");
@@ -68,10 +71,10 @@ fn main() -> Result {
 
 async fn serve_dns(addr: SocketAddr) -> Result {
     let socket = UdpSocket::bind(addr).await?;
+    debug!("bound socket to {}.", &addr);
 
     let mut buf = [0u8; 512];
     loop {
-        info!("recv_from...");
         let (bytes_read, sender_addr) = match socket.recv_from(&mut buf).await {
             Err(e) => {
                 error!("error while receiving datagram: {}", e);
@@ -80,14 +83,28 @@ async fn serve_dns(addr: SocketAddr) -> Result {
             Ok(r) => r,
         };
         debug!("received datagram (length: {}, sender: {})", bytes_read, sender_addr);
-        let content = Vec::from(&buf[0..bytes_read]);
+        let request_bytes = Vec::from(&buf[0..bytes_read]);
 
-        Task::spawn(answer_dns_query(content, sender_addr.clone()))
-            .detach();
+        // have a task respond to this request
+        let cloned_sender_addr = sender_addr.clone();
+        let cloned_socket = socket.clone();
+        Task::spawn(async move {
+            let result = respond(request_bytes, cloned_sender_addr, cloned_socket).await;
+            if let Err(e) = result {
+                error!("{}", e);
+            }
+        }).detach();
     }
 }
 
-async fn answer_dns_query(raw_content: Vec<u8>, sender_addr: SocketAddr) -> Result {
-    println!("Content: {:?}", raw_content);
+async fn respond(request_bytes: Vec<u8>, sender_addr: SocketAddr, socket: UdpSocket) -> Result {
+    let response_bytes = dns::answer_query(request_bytes)
+        .or_else(|e| Err(anyhow!("error understanding or answering query: {}", e)))?;
+
+    socket.send_to(&response_bytes, sender_addr)
+        .await
+        .or_else(|e| Err(anyhow!("error sending response: {}", e)))?;
+
     Ok(())
 }
+

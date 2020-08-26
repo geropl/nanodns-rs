@@ -16,6 +16,11 @@ thiserror = "1.0.13"
 pretty_env_logger = "0.4.0"
 log = "0.4.11"
 
+# dns
+trust-dns-server = "0.19.5"
+# trust-dns = "0.19.5"
+# trust-dns-proto = "0.19.5"
+
 # runtime + support
 ctrlc = "3.1.6"
 async-channel = "1.4.0"
