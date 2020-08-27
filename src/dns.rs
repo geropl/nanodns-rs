@@ -1,4 +1,4 @@
-use crate::Result;
+use crate::AResult;
 
 use trust_dns_server as dns;
 use dns::proto;
@@ -22,7 +22,7 @@ pub struct DnsAuthority {
 }
 
 impl DnsAuthority {
-    pub fn new(names: Vec<(String, Ipv4Addr)>) -> Result<DnsAuthority> {
+    pub fn new(names: Vec<(String, Ipv4Addr)>) -> AResult<DnsAuthority> {
         let mut map = BTreeMap::new();
         for (domain, addr) in names {
             let name = to_name(domain.as_str())?;
@@ -35,7 +35,7 @@ impl DnsAuthority {
         })
     }
 
-    pub fn answer_query(&self, raw_content: Vec<u8>) -> Result<Vec<u8>> {
+    pub fn answer_query(&self, raw_content: Vec<u8>) -> AResult<Vec<u8>> {
         let mut decoder = BinDecoder::new(&raw_content);
         let request = MessageRequest::read(&mut decoder)
             .map_err(|e| anyhow!("dns decode error: {:?}", e))?;
@@ -103,13 +103,13 @@ impl DnsAuthority {
     }
 }
 
-fn respond_with(request: &MessageRequest, response_code: proto::op::ResponseCode) -> Result<Vec<u8>> {
+fn respond_with(request: &MessageRequest, response_code: proto::op::ResponseCode) -> AResult<Vec<u8>> {
     let builder = MessageResponseBuilder::new(None);
     let response = builder.error_msg(request.id(), request.op_code(), response_code);
     encode(response)
 }
 
-fn encode(response: MessageResponse) -> Result<Vec<u8>> {
+fn encode(response: MessageResponse) -> AResult<Vec<u8>> {
     let mut buf = Vec::with_capacity(512);
     let mut encoder = BinEncoder::new(&mut buf);
     response.destructive_emit(&mut encoder)?;
@@ -120,7 +120,7 @@ fn none() -> Box<dyn Iterator<Item = &'static Record> + Send> {
     Box::new(std::iter::empty())
 }
 
-fn to_name(domain: &str) -> Result<Name> {
+fn to_name(domain: &str) -> AResult<Name> {
     let labels: std::result::Result<Vec<Label>, _> = domain.split(".")
         .collect::<Vec<&str>>()
         .into_iter()

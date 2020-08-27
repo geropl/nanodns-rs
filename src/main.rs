@@ -35,13 +35,13 @@ struct Options {
     verbose: u16,
 }
 
-fn parse_socket_addr(addr: &str) -> std::result::Result<SocketAddr, std::net::AddrParseError> {
+fn parse_socket_addr(addr: &str) -> Result<SocketAddr, std::net::AddrParseError> {
     addr.parse()
 }
 
-type Result<T> = std::result::Result<T, anyhow::Error>;
+type AResult<T> = Result<T, anyhow::Error>;
 
-fn main() -> Result<()> {
+fn main() -> AResult<()> {
     let options = Options::parse();
 
     // initialize logger
@@ -76,7 +76,7 @@ fn main() -> Result<()> {
     })
 }
 
-async fn serve_dns(addr: SocketAddr, dns_authority: dns::DnsAuthority) -> Result<()> {
+async fn serve_dns(addr: SocketAddr, dns_authority: dns::DnsAuthority) -> AResult<()> {
     let socket = UdpSocket::bind(addr).await?;
     debug!("bound socket to {}.", &addr);
 
@@ -106,7 +106,7 @@ async fn serve_dns(addr: SocketAddr, dns_authority: dns::DnsAuthority) -> Result
     }
 }
 
-async fn respond(request_bytes: Vec<u8>, sender_addr: SocketAddr, socket: UdpSocket, dns_authority: Arc<dns::DnsAuthority>) -> Result<()> {
+async fn respond(request_bytes: Vec<u8>, sender_addr: SocketAddr, socket: UdpSocket, dns_authority: Arc<dns::DnsAuthority>) -> AResult<()> {
     let response_bytes = dns_authority.answer_query(request_bytes)
         .or_else(|e| Err(anyhow!("error understanding or answering query: {}", e)))?;
 
@@ -117,7 +117,7 @@ async fn respond(request_bytes: Vec<u8>, sender_addr: SocketAddr, socket: UdpSoc
     Ok(())
 }
 
-fn load_names(path: &str) -> Result<Vec<(String, Ipv4Addr)>> {
+fn load_names(path: &str) -> AResult<Vec<(String, Ipv4Addr)>> {
     use std::fs;
     use std::path::PathBuf;
 
@@ -127,7 +127,7 @@ fn load_names(path: &str) -> Result<Vec<(String, Ipv4Addr)>> {
     }
 
     let contents = String::from_utf8(fs::read(&path)?)?;
-    let names: Result<Vec<(String, Ipv4Addr)>> = contents.lines()
+    let names: AResult<Vec<(String, Ipv4Addr)>> = contents.lines()
         .map(|l| l.trim())
         .filter(|l| !l.starts_with("#"))
         .filter(|l| !l.is_empty())
