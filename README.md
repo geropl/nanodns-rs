@@ -32,3 +32,14 @@ FLAGS:
 ```
 cargo build
 ```
+Builds a static binary using musl
+
+## Requirements
+```
+apt-get install -yq \
+        musl \
+        musl-dev \
+        musl-tools \
+        libssl-dev
+```
+(cmp. the Gitpod [Dockerfile](.gitpod/Dockerfile))
