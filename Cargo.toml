@@ -4,6 +4,11 @@ version = "0.1.0"
 authors = ["Gero Posmyk-Leinemann <gero.posmyk-leinemann@typefox.io>"]
 edition = "2018"
 
+[profile.release]
+opt-level = 'z'  # Optimize for size.
+lto = true
+codegen-units = 1
+
 [dependencies]
 # Use unreleased v3.0.0
 clap = { git = "https://github.com/clap-rs/clap/", rev = "bbb14f8bd47ef201b315d367922343577ee60718"}
