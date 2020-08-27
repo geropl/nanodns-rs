@@ -25,9 +25,8 @@ struct Options {
 
     /// The path to the name file to use
     #[clap(
-        short = "n",
-        long = "names",
-        default_value = "./names.conf"
+        default_value = "./names.conf",
+        name = "path-to-names.conf"
     )]
     name_file_path: String,
 
