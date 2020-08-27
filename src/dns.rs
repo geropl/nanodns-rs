@@ -22,15 +22,16 @@ pub struct DnsAuthority {
 }
 
 impl DnsAuthority {
-    pub fn new(names_map: Vec<(String, String)>) -> Result<DnsAuthority> {
-        let mut names = BTreeMap::new();
-        for (domain, a_record) in names_map {
+    pub fn new(names: Vec<(String, Ipv4Addr)>) -> Result<DnsAuthority> {
+        let mut map = BTreeMap::new();
+        for (domain, addr) in names {
             let name = to_name(domain.as_str())?;
-            let addr: Ipv4Addr = a_record.parse()?;
-            names.insert(domain, (name, addr));
+            map.insert(domain, (name, addr));
         }
+        info!("zone contents:\n{:?}", map.iter().collect::<Vec<(&String, &(Name, Ipv4Addr))>>());
+
         Ok(DnsAuthority {
-            names: Arc::new(names),
+            names: Arc::new(map),
         })
     }
 

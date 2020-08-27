@@ -8,8 +8,8 @@ use async_net::UdpSocket;
 use smol::Task;
 
 use std::net::SocketAddr;
-use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::net::Ipv4Addr;
 
 #[derive(Clap)]
 #[clap(
@@ -63,8 +63,8 @@ fn main() -> Result<()> {
     })?;
 
     // load configured name map
-    let names_map = load_names(&options.name_file_path)?;
-    let dns_authority = dns::DnsAuthority::new(names_map)?;
+    let names = load_names(&options.name_file_path)?;
+    let dns_authority = dns::DnsAuthority::new(names)?;
 
     smol::run(async {
         Task::spawn(serve_dns(options.addr, dns_authority))
@@ -118,7 +118,34 @@ async fn respond(request_bytes: Vec<u8>, sender_addr: SocketAddr, socket: UdpSoc
     Ok(())
 }
 
-fn load_names(path: &str) -> Result<Vec<(String, String)>> {
-    // TODO actually load the map
-    Ok(vec![("who.is".to_owned(), "1.2.3.4".to_owned())])
+fn load_names(path: &str) -> Result<Vec<(String, Ipv4Addr)>> {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let path = PathBuf::from(path);
+    if !path.exists() {
+        return Err(anyhow!("configured names file '{}' does not exist!", path.display()));
+    }
+
+    let contents = String::from_utf8(fs::read(&path)?)?;
+    let names: Result<Vec<(String, Ipv4Addr)>> = contents.lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.starts_with("#"))
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let strs: Vec<&str> = l.split("=")
+                .map(|s| s.trim())
+                .collect();
+            if strs.len() != 2 {
+                return Err(anyhow!("cannot parse names file: expected lines of the form '<name>=<ipv4>', got '{}'!", l));
+            }
+
+            let domain = strs[0].to_owned();
+            let addr: Ipv4Addr = strs[1].parse()
+                .or_else(|e| Err(anyhow!("cannot parse IPv4 addr from '{}': {}", strs[1], e)))?;
+            Ok((domain, addr))
+        })
+        .collect();
+
+    names
 }
