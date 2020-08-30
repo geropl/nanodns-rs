@@ -66,7 +66,10 @@ fn main() -> AResult<()> {
     let dns_authority = dns::DnsAuthority::new(names)?;
 
     smol::run(async {
-        Task::spawn(serve_dns(options.addr, dns_authority))
+        let socket = UdpSocket::bind(options.addr).await?;
+        debug!("bound socket to {}.", &options.addr);
+
+        Task::spawn(serve_dns(socket, dns_authority))
             .detach();
         info!("listening for DNS queries on {}...", options.addr);
 
@@ -76,12 +79,8 @@ fn main() -> AResult<()> {
     })
 }
 
-async fn serve_dns(addr: SocketAddr, dns_authority: dns::DnsAuthority) -> AResult<()> {
-    let socket = UdpSocket::bind(addr).await?;
-    debug!("bound socket to {}.", &addr);
-
+async fn serve_dns(socket: UdpSocket, dns_authority: dns::DnsAuthority) -> AResult<()> {
     let dns_authority = Arc::new(dns_authority);
-    // let auth = &dns_authority;
     let mut buf = [0u8; 512];
     loop {
         let (bytes_read, sender_addr) = match socket.recv_from(&mut buf).await {
